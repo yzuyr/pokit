@@ -430,6 +430,10 @@
               onKeyUp(key);
             }
           }}
+          oncontextmenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
         >
           <div class="text-xl">{chord.name}</div>
           <div class="absolute bottom-4 right-4 text-3xl">
