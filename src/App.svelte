@@ -295,6 +295,21 @@
                             onKeyDown(key);
                         }
                     }}
+                    ontouchstart={() => {
+                        if (!pressedKeys.has(key as KeyboardKeys)) {
+                            onKeyDown(key);
+                        }
+                    }}
+                    ontouchmove={() => {
+                        if (pressedKeys.has(key as KeyboardKeys)) {
+                            onKeyDown(key);
+                        }
+                    }}
+                    ontouchend={() => {
+                        if (pressedKeys.has(key as KeyboardKeys)) {
+                            onKeyUp(key);
+                        }
+                    }}
                     onmouseup={() => {
                         if (pressedKeys.has(key as KeyboardKeys)) {
                             onKeyUp(key);
