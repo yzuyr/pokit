@@ -2,12 +2,12 @@
 @plugin "daisyui";
 
 @plugin "daisyui" {
-    themes:
-        light --default,
-        dark --prefersdark,
-        sunset;
+  themes:
+    light --default,
+    dark --prefersdark,
+    sunset;
 }
 
 body {
-    font-family: "Geist Variable", sans-serif;
+  font-family: "Geist Variable", sans-serif;
 }

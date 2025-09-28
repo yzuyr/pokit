@@ -7,13 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json"
+    "format": "prettier --write ."
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.0",
     "@tailwindcss/vite": "^4.1.13",
     "@tsconfig/svelte": "^5.0.5",
     "daisyui": "^5.1.25",
+    "prettier": "^3.6.2",
+    "prettier-plugin-svelte": "^3.4.0",
     "svelte": "^5.39.4",
     "svelte-check": "^4.3.1",
     "tailwindcss": "^4.1.13",
@@ -28,6 +30,7 @@
     "clsx": "^2.1.1",
     "nipplejs": "^0.10.2",
     "svelte-knobs": "^1.0.0-beta.1",
+    "tonal": "^6.4.2",
     "tone": "^15.1.22",
     "ts-pattern": "^5.8.0"
   }
