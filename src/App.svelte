@@ -1,77 +1,76 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import colors from "tailwindcss/colors";
+  import { watch } from "runed";
   import * as Tone from "tone";
   import { match, P } from "ts-pattern";
   import { clsx } from "clsx";
   import { SvgKnob } from "svelte-knobs";
   import { SvelteSet } from "svelte/reactivity";
-  import { LinearParam } from "svelte-knobs/params";
+  import { EnumParam, LinearParam } from "svelte-knobs/params";
   import nipplejs from "nipplejs";
+  import { Chord } from "tonal";
+  import TranspositionInput from "./components/transposition-input.svelte";
+  import { GithubIcon } from "lucide-svelte";
 
   const clamp = (val: number, min = 1, max = 10) =>
     Math.min(Math.max(val, min), max);
-
-  const WAVEFORM = {
-    SINE: "sine",
-    SAWTOOTH: "sawtooth",
-    SQUARE: "square",
-    TRIANGLE: "triangle",
-  } as const;
-
-  type Waveform = (typeof WAVEFORM)[keyof typeof WAVEFORM];
   type KeyboardKeys = "h" | "u" | "j" | "i" | "k" | "o" | "l";
 
   const chords = {
     h: {
-      name: "Cmaj",
       frequencies: ["C3", "E3", "G3"],
       class: "col-span-2 row-span-3 col-start-1 row-start-2",
     },
     u: {
-      name: "Dmin",
       frequencies: ["D3", "F3", "A3"],
       class: "col-span-3 col-start-1 row-start-1",
     },
     j: {
-      name: "Emin",
       frequencies: ["E3", "G3", "B3"],
       class: "col-span-2 row-span-3 col-start-3 row-start-2",
     },
     i: {
-      name: "Fmaj",
       frequencies: ["F3", "A3", "C4"],
       class: "col-span-2 col-start-4 row-start-1",
     },
     k: {
-      name: "Gmaj",
       frequencies: ["G3", "B3", "D4"],
       class: "col-span-2 row-span-3 col-start-5 row-start-2",
     },
     o: {
-      name: "Amin",
       frequencies: ["A3", "C4", "E4"],
       class: "col-span-3 col-start-6 row-start-1",
     },
     l: {
-      name: "Bdim",
       frequencies: ["B3", "D4", "F4"],
       class: "col-span-2 row-span-3 col-start-7 row-start-2",
     },
   };
+
+  const waveformEnum = new EnumParam([
+    "sawtooth",
+    "sine",
+    "square",
+    "triangle",
+  ] as const);
 
   let nippleElement = $state<HTMLElement>();
   let joystickManager = $state<nipplejs.JoystickManager>();
   let synth = $state<Tone.PolySynth>();
   let lastKeyClicked = $state<KeyboardKeys>();
   let pressedKeys = $state<SvelteSet<string>>(new SvelteSet());
-  let transposition = $state<number>(0); // in semitones
+  let modifierKeys = $state<SvelteSet<string>>(new SvelteSet());
   let previousTransposition = $state<number>(0);
-  let waveform = $state<Waveform>(WAVEFORM.SAWTOOTH);
+  let joystickActive = $state<boolean>(false);
+  // Knobs
+  let waveformValue = $state<number>(0);
+  const waveform = $derived(waveformEnum.denormalize(waveformValue));
+  let transposition = $state<number>(0);
   let attack = $state(0.01);
   let decay = $state(0.3);
   let sustain = $state(0.8);
   let release = $state(0.5);
-  let joystickActive = $state<boolean>(false);
 
   // Circular transposition mapping based on joystick angle
   // nipple.js uses 0° as right, 90° as up, 180° as left, 270° as down
@@ -97,20 +96,45 @@
     );
   }
 
+  function getChordName(key: KeyboardKeys): string {
+    const frequencies =
+      transposition === 0
+        ? chords[key].frequencies
+        : getTransposedFrequencies(key);
+    const chord = Chord.detect(frequencies);
+
+    if (chord.length > 0) {
+      // Return the first (most likely) chord detection
+      return chord[0];
+    }
+
+    // Fallback: detect original chord and show transposition
+    const originalChord = Chord.detect(chords[key].frequencies);
+    const originalName =
+      originalChord.length > 0 ? originalChord[0] : "Unknown";
+
+    if (transposition === 0) {
+      return originalName;
+    }
+
+    const direction = transposition > 0 ? "+" : "";
+    return `${originalName} ${direction}${transposition}`;
+  }
+
   function setTransposition(value: number) {
     transposition = clamp(value, -24, 24);
   }
 
   function getTranspositionFromAngle(angle: number): number {
     // Normalize angle to 0-360 range
-    let normalizedAngle = ((angle % 360) + 360) % 360;
+    const normalizedAngle = ((angle % 360) + 360) % 360;
 
     // Find closest mapped angle
     let closestAngle = 0;
     let minDifference = 360;
 
     Object.keys(transpositionMap).forEach((key) => {
-      const mapAngle = parseInt(key);
+      const mapAngle = Number.parseInt(key);
       const difference = Math.min(
         Math.abs(normalizedAngle - mapAngle),
         Math.abs(normalizedAngle - mapAngle + 360),
@@ -147,38 +171,39 @@
 
   function handleJoystickEnd() {
     joystickActive = false;
-    // Optionally reset transposition when joystick is released
-    // setTransposition(0);
-  }
-
-  function getWASDAngle(): number | null {
-    const w = pressedKeys.has("w");
-    const a = pressedKeys.has("a");
-    const s = pressedKeys.has("s");
-    const d = pressedKeys.has("d");
-
-    // Map WASD combinations to nipple.js angles
-    if (w && d) return 45; // Top-right
-    if (s && d) return 315; // Bottom-right
-    if (s && a) return 225; // Bottom-left
-    if (w && a) return 135; // Top-left
-    if (w) return 90; // Top
-    if (d) return 0; // Right
-    if (s) return 270; // Bottom
-    if (a) return 180; // Left
-
-    return null; // No WASD keys pressed
+    setTransposition(0);
   }
 
   function updateWASDTransposition() {
-    const angle = getWASDAngle();
+    const w = modifierKeys.has("w");
+    const a = modifierKeys.has("a");
+    const s = modifierKeys.has("s");
+    const d = modifierKeys.has("d");
+
+    // Map WASD combinations to nipple.js angles
+    let angle = null;
+    if (w && d)
+      angle = 45; // Top-right
+    else if (s && d)
+      angle = 315; // Bottom-right
+    else if (s && a)
+      angle = 225; // Bottom-left
+    else if (w && a)
+      angle = 135; // Top-left
+    else if (w)
+      angle = 90; // Top
+    else if (d)
+      angle = 0; // Right
+    else if (s)
+      angle = 270; // Bottom
+    else if (a) angle = 180; // Left
+
     if (angle !== null) {
       const newTransposition = getTranspositionFromAngle(angle);
-      setTransposition(newTransposition);
-    } else {
-      // Reset transposition when no WASD keys are pressed
-      setTransposition(0);
+      return setTransposition(newTransposition);
     }
+    // Reset transposition when no WASD keys are pressed
+    return setTransposition(0);
   }
 
   // Handle real-time transposition changes for currently playing notes
@@ -186,29 +211,44 @@
     if (
       transposition !== previousTransposition &&
       lastKeyClicked &&
-      pressedKeys.has(lastKeyClicked)
+      pressedKeys.has(lastKeyClicked) &&
+      synth
     ) {
-      // Release the old transposed notes
+      // Only update if we're currently playing a chord and synth is ready
       const oldFreqs = chords[lastKeyClicked].frequencies.map((note) =>
         transposeNote(note, previousTransposition),
       );
-      synth?.triggerRelease(oldFreqs);
 
-      // Trigger the new transposed notes
-      synth?.triggerAttack(getTransposedFrequencies(lastKeyClicked));
+      // Wait for all pending state changes to complete
+      tick().then(() => {
+        synth?.triggerRelease(oldFreqs);
+        if (!lastKeyClicked) return;
+        synth?.triggerAttack(getTransposedFrequencies(lastKeyClicked));
+      });
     }
     previousTransposition = transposition;
   });
 
-  // Handle WASD transposition changes
-  $effect(() => {
-    updateWASDTransposition();
-  });
+  // Handle WASD transposition changes - only when WASD keys change
+  watch(
+    () => modifierKeys.values(),
+    () => {
+      updateWASDTransposition();
+    },
+  );
 
   // Handle ADSR changes in real-time
   $effect(() => {
     if (synth) {
+      // Store current state before making changes
+      const wasPlaying = lastKeyClicked && pressedKeys.has(lastKeyClicked);
+      const currentKey = lastKeyClicked;
+
+      // Update synth settings
       synth.set({
+        oscillator: {
+          type: waveform,
+        },
         envelope: {
           attack,
           decay,
@@ -216,54 +256,44 @@
           release,
         },
       });
+
+      // Only release all and clear state if we're not currently playing
+      if (!wasPlaying) {
+        synth.releaseAll();
+        pressedKeys.clear();
+        lastKeyClicked = undefined;
+      }
+      if (currentKey) {
+        // If we were playing, restart the current chord with new settings
+        tick().then(() => {
+          synth?.triggerRelease(getTransposedFrequencies(currentKey));
+          synth?.triggerAttack(getTransposedFrequencies(currentKey));
+        });
+      }
     }
   });
-
-  function updateWaveform() {
-    if (synth) {
-      // Stop all current notes to prevent distortion
-      synth.releaseAll();
-      synth.dispose();
-
-      // Create new synth with selected waveform - no filter
-      synth = new Tone.PolySynth({
-        voice: Tone.Synth,
-        options: {
-          oscillator: {
-            type: waveform as any,
-          },
-          envelope: {
-            attack,
-            decay,
-            sustain,
-            release,
-          },
-          volume: -16,
-        },
-      }).toDestination();
-
-      // Clear pressed keys state since we stopped all notes
-      pressedKeys.clear();
-      lastKeyClicked = undefined;
-    }
-  }
 
   function onKeyDown(eventKey: string) {
     return match(eventKey)
       .with(P.union("h", "u", "j", "i", "k", "o", "l"), (key) => {
         // Only trigger if this key isn't already being pressed (prevents key repeat)
-        if (!pressedKeys.has(key)) {
+        if (!pressedKeys.has(key) && synth) {
           pressedKeys.add(key);
-          if (lastKeyClicked) {
-            synth?.triggerRelease(getTransposedFrequencies(lastKeyClicked));
+
+          // Release previous chord if playing
+          if (lastKeyClicked && pressedKeys.has(lastKeyClicked)) {
+            synth.triggerRelease(getTransposedFrequencies(lastKeyClicked));
+            pressedKeys.delete(lastKeyClicked);
           }
-          synth?.triggerAttack(getTransposedFrequencies(key));
+
+          // Trigger new chord
+          synth.triggerAttack(getTransposedFrequencies(key));
           lastKeyClicked = key;
         }
       })
       .with(P.union("w", "a", "s", "d"), (key) => {
-        if (!pressedKeys.has(key)) {
-          pressedKeys.add(key);
+        if (!modifierKeys.has(key)) {
+          modifierKeys.add(key);
         }
       })
       .run();
@@ -272,14 +302,16 @@
   function onKeyUp(eventKey: string) {
     return match(eventKey)
       .with(P.union("h", "u", "j", "i", "k", "o", "l"), (key) => {
-        pressedKeys.delete(key);
-        synth?.triggerRelease(getTransposedFrequencies(key));
-        if (lastKeyClicked === key) {
-          lastKeyClicked = undefined;
+        if (pressedKeys.has(key) && synth) {
+          pressedKeys.delete(key);
+          synth.triggerRelease(getTransposedFrequencies(key));
+          if (lastKeyClicked === key) {
+            lastKeyClicked = undefined;
+          }
         }
       })
       .with(P.union("w", "a", "s", "d"), (key) => {
-        pressedKeys.delete(key);
+        modifierKeys.delete(key);
       })
       .run();
   }
@@ -289,7 +321,7 @@
       voice: Tone.Synth,
       options: {
         oscillator: {
-          type: waveform as any,
+          type: waveform,
         },
         envelope: {
           attack,
@@ -306,13 +338,13 @@
         mode: "static",
         position: { left: "50%", top: "50%" },
         dynamicPage: true,
-        size: 150,
-        color: "#3b82f6",
+        size: 160,
+        color: colors.orange[500],
         fadeTime: 250,
       });
 
       // Add joystick event listeners with proper context binding
-      joystickManager.on("move", (evt, data) => handleJoystickMove(data));
+      joystickManager.on("move", (_evt, data) => handleJoystickMove(data));
       joystickManager.on("end", () => handleJoystickEnd());
     }
   });
@@ -323,48 +355,22 @@
   on:keyup|preventDefault={(event) => onKeyUp(event.key)}
 />
 
-<main class="h-screen w-full flex flex-col p-4">
-  <header class="flex-1 grid grid-cols-4 items-stretch">
-    <div>Pokit</div>
-    <div class="flex flex-col gap-2">
-      <label for="transposition" class="text-sm font-medium">
-        Transpose (semitones)
-      </label>
-      <div class="join">
-        <button
+<main class="h-screen w-full flex">
+  <aside class="flex flex-col items-center justify-between p-4 pr-0">
+    <div class="flex flex-col w-full">
+      <div class="text-xl font-semibold w-full">Pokit</div>
+      <div class="flex gap-2 items-center w-full">
+        <a
+          href="https://github.com/yzuyr/pokit"
+          target="_blank"
+          rel="noopener noreferrer"
           class="btn btn-square"
-          onclick={() => setTransposition(transposition - 12)}>O-</button
         >
-        <input
-          id="transposition"
-          type="number"
-          min="-24"
-          max="24"
-          step="1"
-          class="input"
-          bind:value={transposition}
-        />
-        <button
-          class="btn btn-square"
-          onclick={() => setTransposition(transposition + 12)}>O+</button
-        >
+          <GithubIcon size={16} />
+        </a>
       </div>
     </div>
-    <div class="flex flex-col gap-2">
-      <label for="waveform" class="text-sm font-medium"> Waveform </label>
-      <select
-        id="waveform"
-        class="select"
-        bind:value={waveform}
-        onchange={updateWaveform}
-      >
-        <option value="sine">Sine</option>
-        <option value="sawtooth">Saw</option>
-        <option value="square">Square</option>
-        <option value="triangle">Triangle</option>
-      </select>
-    </div>
-    <div class="grid grid-cols-4 grid-rows-2">
+    <div class="grid grid-cols-2 w-full">
       <label class="label flex-col text-xs font-semibold" for="attack">
         <SvgKnob id="attack" bind:value={attack} />
         <span class="uppercase">Attack</span>
@@ -381,66 +387,75 @@
         <SvgKnob id="release" bind:value={release} />
         <span class="uppercase">Release</span>
       </label>
+      <label class="label flex-col text-xs font-semibold" for="waveform">
+        <SvgKnob
+          id="waveform"
+          bind:value={waveformValue}
+          snapPoints={[0.33, 0.66]}
+        />
+        <span class="uppercase">{waveform}</span>
+      </label>
     </div>
-  </header>
-  <div class="flex flex-[5] gap-4">
-    <aside class="flex-1 flex flex-col items-center justify-center">
-      <div class="relative flex-1 flex items-center justify-center">
-        <div
-          bind:this={nippleElement}
-          class="min-h-[300px] w-[300px] border-2 border-dashed border-gray-300 rounded-full bg-gray-100"
-        ></div>
+    <div
+      class="relative flex flex-col items-center justify-center w-full gap-2"
+    >
+      <label for="transposition" class="label text-xs font-semibold uppercase">
+        Transpose
+      </label>
+      <div class="relative w-40 h-40">
+        <div bind:this={nippleElement}></div>
       </div>
-    </aside>
-    <div class="flex-[5] grid grid-cols-8 grid-rows-4 gap-4">
-      {#each Object.entries(chords) as [key, chord]}
-        <button
-          class={clsx(
-            "btn h-full focus:outline-none relative font-semibold",
-            chord.class,
-            pressedKeys.has(key as KeyboardKeys) && "btn-primary",
-          )}
-          onmousedown={() => {
-            if (!pressedKeys.has(key as KeyboardKeys)) {
-              onKeyDown(key);
-            }
-          }}
-          ontouchstart={() => {
-            if (!pressedKeys.has(key as KeyboardKeys)) {
-              onKeyDown(key);
-            }
-          }}
-          ontouchmove={() => {
-            if (pressedKeys.has(key as KeyboardKeys)) {
-              onKeyDown(key);
-            }
-          }}
-          ontouchend={() => {
-            if (pressedKeys.has(key as KeyboardKeys)) {
-              onKeyUp(key);
-            }
-          }}
-          onmouseup={() => {
-            if (pressedKeys.has(key as KeyboardKeys)) {
-              onKeyUp(key);
-            }
-          }}
-          onmouseleave={() => {
-            if (pressedKeys.has(key as KeyboardKeys)) {
-              onKeyUp(key);
-            }
-          }}
-          oncontextmenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          <div class="text-xl">{chord.name}</div>
-          <div class="absolute bottom-4 right-4 text-3xl">
-            {key}
-          </div>
-        </button>
-      {/each}
+      <TranspositionInput {transposition} {setTransposition} />
     </div>
+  </aside>
+  <div class="flex-1 grid grid-cols-8 grid-rows-4 gap-4 p-4">
+    {#each Object.entries(chords) as [key, chord]}
+      <button
+        class={clsx(
+          "btn h-full focus:outline-none relative font-semibold",
+          chord.class,
+          pressedKeys.has(key as KeyboardKeys) && "btn-primary",
+        )}
+        onmousedown={() => {
+          if (!pressedKeys.has(key as KeyboardKeys)) {
+            onKeyDown(key);
+          }
+        }}
+        ontouchstart={() => {
+          if (!pressedKeys.has(key as KeyboardKeys)) {
+            onKeyDown(key);
+          }
+        }}
+        ontouchmove={() => {
+          if (pressedKeys.has(key as KeyboardKeys)) {
+            onKeyDown(key);
+          }
+        }}
+        ontouchend={() => {
+          if (pressedKeys.has(key as KeyboardKeys)) {
+            onKeyUp(key);
+          }
+        }}
+        onmouseup={() => {
+          if (pressedKeys.has(key as KeyboardKeys)) {
+            onKeyUp(key);
+          }
+        }}
+        onmouseleave={() => {
+          if (pressedKeys.has(key as KeyboardKeys)) {
+            onKeyUp(key);
+          }
+        }}
+        oncontextmenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      >
+        <div class="text-xl">{getChordName(key as KeyboardKeys)}</div>
+        <div class="absolute bottom-4 right-4 text-3xl">
+          {key}
+        </div>
+      </button>
+    {/each}
   </div>
 </main>
